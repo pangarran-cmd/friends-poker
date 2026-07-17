@@ -1,6 +1,6 @@
 {
   "name": "friends-poker",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "朋友局德州扑克（虚拟筹码，纯娱乐）",
   "main": "index.js",
   "scripts": {

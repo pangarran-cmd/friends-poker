@@ -1,6 +1,8 @@
 // 德州扑克核心引擎：牌、比牌、单局状态机
 'use strict';
 
+const crypto = require('crypto');
+
 const SUITS = ['♠', '♥', '♣', '♦'];
 const RANK_NAMES = { 2:'2',3:'3',4:'4',5:'5',6:'6',7:'7',8:'8',9:'9',10:'10',11:'J',12:'Q',13:'K',14:'A' };
 
@@ -18,9 +20,9 @@ function newDeck() {
 }
 
 function shuffle(deck, rng) {
-  const random = rng || Math.random;
+  // 默认使用加密安全随机数（crypto.randomInt），保证洗牌不可预测
   for (let i = deck.length - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1));
+    const j = rng ? Math.floor(rng() * (i + 1)) : crypto.randomInt(i + 1);
     [deck[i], deck[j]] = [deck[j], deck[i]];
   }
   return deck;
@@ -312,6 +314,7 @@ class Hand {
     }
 
     const winnings = new Map();
+    const potsInfo = []; // 每个底池的金额与归属（主池在前）
     for (const pot of pots) {
       if (pot.eligible.length === 0) continue; // 理论上不会发生
       let best = null, winners = [];
@@ -327,6 +330,7 @@ class Hand {
         if (leftover > 0) { amt += 1; leftover -= 1; } // 余数给靠前的赢家
         winnings.set(w.id, (winnings.get(w.id) || 0) + amt);
       }
+      potsInfo.push({ amount: pot.amount, winners: winners.map(w => w.name) });
     }
 
     for (const p of live) {
@@ -340,6 +344,7 @@ class Hand {
         const p = live.find(q => q.id === id);
         return { id, name: p.name, amount, handName: evals.get(id).name };
       }).filter(w => w.amount > 0),
+      pots: potsInfo,
       reveal: live.map(p => ({
         id: p.id, name: p.name, hole: p.hole,
         handName: evals.get(p.id).name,
