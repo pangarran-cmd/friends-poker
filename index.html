@@ -7,7 +7,8 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%99%A0%EF%B8%8F%3C/text%3E%3C/svg%3E">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html, body { height:100%; overflow:hidden; }
+  html, body { height:100%; overflow:hidden; touch-action:manipulation; }
+  button { touch-action:manipulation; }
   body {
     font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
     background:linear-gradient(160deg,#0a1510 0%,#0d1b12 50%,#091009 100%);
@@ -228,6 +229,7 @@
 
   #toast { position:fixed; top:13%; left:50%; transform:translateX(-50%); background:rgba(140,40,40,.95); color:#fff; padding:10px 20px; border-radius:24px; font-size:14px; display:none; z-index:99; max-width:86%; text-align:center; }
   #toast.good { background:rgba(40,100,60,.95); }
+  #connBar { position:fixed; top:0; left:0; right:0; background:#8c5a1e; color:#fff; font-size:13px; text-align:center; padding:5px; z-index:98; display:none; }
 </style>
 </head>
 <body>
@@ -273,7 +275,7 @@
 <!-- ============ 游戏 ============ -->
 <div id="game">
   <div id="topbar">
-    <span><span class="rname" id="roomName"></span> <span class="code" id="roomCode">----</span></span>
+    <span><span class="rname" id="roomName"></span> <span style="color:#5f7a64;">房号</span><span class="code" id="roomCode">----</span></span>
     <span class="icons">
       <button id="btnChat">💬<span class="dot" id="chatDot"></span></button>
       <button id="btnLedger">📊</button>
@@ -350,6 +352,7 @@
 </div></div>
 
 <div id="toast"></div>
+<div id="connBar">📶 连接已断开，正在重连…</div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
@@ -519,12 +522,16 @@ function enterRoom(code) {
 }
 
 socket.on('connect', () => {
+  $('connBar').style.display = 'none';
   const code = $('roomCode').textContent;
   if (state && code !== '----') {
     socket.emit('joinRoom', { code, name: state.you.name, avatar: myAvatar, token, password: savedPass }, () => {});
   }
 });
-socket.on('errMsg', toast);
+socket.on('disconnect', () => {
+  if (state) $('connBar').style.display = 'block';
+});
+socket.on('errMsg', msg => { toast(msg); lastBottomSig = ''; if (state) renderBottom(); });
 socket.on('kicked', v => { toast('你已' + v); setTimeout(() => location.href = location.pathname, 1800); });
 socket.on('state', s => { clockOffset = s.serverNow - Date.now(); state = s; render(); });
 
@@ -751,7 +758,23 @@ function render() {
 }
 
 // ---------- 底部操作区 ----------
-function renderBottom() {
+// 只在内容真正变化时才重建按钮，避免手指点击瞬间按钮被拆掉重建导致"按了没反应"
+let lastBottomSig = '';
+function bottomSig() {
+  const s = state, h = s.hand;
+  return JSON.stringify([
+    !!s.playing, !!(h && h.yourTurn), h && h.legal, h && h.pot, h && h.currentBet,
+    s.you.chips, s.you.pendingRebuy, s.you.pendingCredit, s.you.sitOut,
+    s.youAreHost, s.ending, s.ended, raiseOpen,
+    s.players.filter(p => p.chips > 0 && p.connected && !p.sitOut).length,
+    s.players.find(p => p.isTurn)?.name,
+    s.players.find(p => p.isYou)?.inHand,
+  ]);
+}
+function renderBottom(force) {
+  const sig = bottomSig();
+  if (!force && sig === lastBottomSig) return;
+  lastBottomSig = sig;
   const s = state, h = s.hand;
   const box = $('bottom');
   box.innerHTML = '';
@@ -809,7 +832,7 @@ function renderBottom() {
     row.querySelector('#btnFold').onclick = () => act({ type: 'fold' });
     row.querySelector('#btnCheck').onclick = () => act({ type: 'check' });
     row.querySelector('#btnCall').onclick = () => act({ type: 'call' });
-    row.querySelector('#btnRaise').onclick = () => { raiseOpen = !raiseOpen; renderBottom(); };
+    row.querySelector('#btnRaise').onclick = () => { raiseOpen = !raiseOpen; renderBottom(true); };
     return;
   }
 
@@ -859,7 +882,19 @@ function renderBottom() {
   }
 }
 
-function act(a) { socket.emit('action', a); raiseOpen = false; }
+// 防连点 + 即时反馈 + 断线提示
+let actionLock = 0;
+function act(a) {
+  const now = Date.now();
+  if (now - actionLock < 400) return; // 防止手抖连点重复提交
+  actionLock = now;
+  if (!socket.connected) { toast('网络连接中，请稍候再试…'); return; }
+  socket.emit('action', a);
+  raiseOpen = false;
+  // 立即给出视觉反馈：按钮变暗锁定，等服务器回包后自动恢复/刷新
+  document.querySelectorAll('#actionBtns button').forEach(b => { b.disabled = true; b.style.opacity = '.5'; });
+  setTimeout(() => { lastBottomSig = ''; if (state) renderBottom(); }, 1600); // 兜底恢复
+}
 
 // ---------- 房主审批横幅 ----------
 function renderApprove() {
